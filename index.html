@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HydroJS v4.11 - Fading Trails (Documented)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* --- GLOBAL STYLES --- */
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; font-family: 'Inter', sans-serif; }
+        canvas { display: block; touch-action: none; }
+        
+        /* --- UI PANEL STYLING --- */
+        /* Main controls container with glassmorphism effect */
+        #controls {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px);
+            padding: 12px; border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.1);
+            width: 300px; max-height: 85vh; overflow-y: auto;
+            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6); z-index: 10;
+            transition: transform 0.3s ease; /* Smooth slide in/out */
+        }
+        #controls.hidden-panel { transform: translateX(-340px); }
+        
+        /* Custom scrollbar for the panel */
+        #controls::-webkit-scrollbar { width: 4px; }
+        #controls::-webkit-scrollbar-thumb { background-color: #38bdf8; }
+
+        h1 { font-size: 1.1rem; font-weight: 700; color: #38bdf8; margin-bottom: 10px; }
+
+        /* --- ACCORDION SECTIONS --- */
+        .section-header {
+            font-size: 0.75rem; text-transform: uppercase; color: #94a3b8;
+            margin-top: 8px; padding: 8px 4px; font-weight: 700;
+            cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            transition: color 0.2s;
+        }
+        .section-header:hover { color: #f1f5f9; }
+        /* Arrow rotation logic */
+        .section-header::after { content: '▼'; font-size: 0.6rem; transition: transform 0.3s; }
+        .section-header.collapsed::after { transform: rotate(-90deg); }
+        
+        .section-content {
+            overflow: hidden; transition: max-height 0.3s ease-out;
+            max-height: 800px; /* Arbitrary large value to allow expansion */
+        }
+        .section-content.collapsed { max-height: 0; }
+
+        /* --- INPUT ELEMENTS --- */
+        .slider-container { margin-bottom: 10px; padding-top: 8px; }
+        .slider-label { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: #cbd5e1; margin-bottom: 4px; }
+        
+        input[type="range"] { -webkit-appearance: none; width: 100%; height: 4px; background: #334155; border-radius: 2px; outline: none; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: #38bdf8; border-radius: 50%; cursor: pointer; }
+
+        .num-input {
+            background: rgba(0, 0, 0, 0.2); border: 1px solid #334155; 
+            color: #38bdf8; font-family: 'Inter', sans-serif; font-size: 0.8rem;
+            width: 60px; text-align: right; padding: 2px 4px; border-radius: 4px;
+            outline: none; transition: border-color 0.2s;
+        }
+
+        .checkbox-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-top: 8px; }
+        .checkbox-label { font-size: 0.85rem; color: #cbd5e1; display: flex; align-items: center; }
+        
+        /* Custom Toggle Switch CSS */
+        .toggle-switch { position: relative; width: 36px; height: 20px; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334155; transition: .3s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #38bdf8; }
+        input:checked + .slider:before { transform: translateX(16px); }
+
+        .btn { background: #38bdf8; color: #0f172a; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 700; width: 100%; font-size: 0.9rem; margin-top: 10px; }
+        .btn.secondary { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
+        .btn.active { background: #f472b6; color: white; } 
+
+        .tool-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .tool-btn { background: #334155; font-size: 0.8rem; padding: 8px; border-radius: 6px; text-align: center; cursor: pointer; border: 1px solid transparent; }
+        .tool-btn.selected { background: #38bdf8; color: #0f172a; font-weight: bold; }
+
+        /* --- STATUS BADGES --- */
+        .stat-box { font-family: monospace; font-size: 0.7rem; color: #94a3b8; margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .status-badge { font-weight: bold; display: none; margin-left: 5px;}
+        .status-badge.merging { display: inline; color: #fbbf24; } 
+        .status-badge.splitting { display: inline; color: #4ade80; } 
+        .status-badge.stable { display: inline; color: #38bdf8; }
+        .status-badge.precision { display: inline; color: #f472b6; }
+
+        /* --- TOOLTIPS --- */
+        .info-icon {
+            display: inline-block; width: 14px; height: 14px; 
+            background: rgba(255,255,255,0.15); color: #94a3b8;
+            border-radius: 50%; text-align: center; line-height: 14px;
+            font-size: 10px; cursor: help; margin-left: 6px; position: relative;
+            font-family: monospace; font-weight: bold;
+        }
+        .info-icon:hover { background: #38bdf8; color: #0f172a; }
+
+        #global-tooltip {
+            position: fixed; 
+            background: #0f172a; color: #f8fafc; 
+            padding: 8px 12px; border-radius: 6px; 
+            font-size: 11px; max-width: 220px;
+            border: 1px solid #334155; 
+            z-index: 9999; 
+            pointer-events: none; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            line-height: 1.4; display: none;
+            left: 0; top: 0;
+        }
+
+        .custom-select {
+            width: 100%; background: #1e293b; color: #cbd5e1; border: 1px solid #334155;
+            padding: 8px; border-radius: 6px; font-size: 0.85rem; outline: none; margin-bottom: 10px;
+        }
+
+        /* Hamburger Menu Button */
+        #menu-toggle {
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(4px);
+            color: white; border: 1px solid rgba(255,255,255,0.2);
+            width: 40px; height: 40px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; z-index: 20; font-size: 1.5rem;
+            transition: background 0.2s;
+        }
+        #menu-toggle:hover { background: rgba(56, 189, 248, 0.2); }
+    </style>
+</head>
+<body>
+
+    <!-- Toggle Button for UI visibility -->
+    <button id="menu-toggle">≡</button>
+    
+    <!-- Global tooltip container (floats on top) -->
+    <div id="global-tooltip"></div>
+
+    <!-- Main Control Panel -->
+    <div id="controls">
+        <h1>HydroJS v4.11</h1>
+
+        <!-- Section: Tool Selection (Hand, Ball, Brush) -->
+        <div class="section-header" onclick="toggleSection(this)">Tools</div>
+        <div class="section-content">
+            <div class="tool-grid">
+                <div class="tool-btn selected" id="tool-hand" onclick="setTool('hand')">Hand</div>
+                <div class="tool-btn" id="tool-ball" onclick="setTool('ball')">Ball</div>
+                <div class="tool-btn" id="tool-brush" onclick="setTool('brush')">Brush</div>
+            </div>
+            <!-- Context-sensitive controls for Ball Tool -->
+            <div id="ball-controls" style="display:none;">
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span>Ball Density</span>
+                        <span class="info-icon" data-tooltip="Controls buoyancy. < 1.0 floats, > 1.0 sinks.">i</span>
+                        <span id="val-ballDensity">1.0</span>
+                    </div>
+                    <input type="range" id="ballDensity" min="0.2" max="3.0" step="0.1" value="1.0">
+                </div>
+            </div>
+            <button class="btn secondary" id="mode-btn" style="margin-top:0;">Hand Mode: Attract</button>
+        </div>
+
+        <!-- Section: Visualization Settings -->
+        <div class="section-header" onclick="toggleSection(this)">Visualization</div>
+        <div class="section-content">
+            <div style="margin-top: 8px;">
+                <div class="slider-label">
+                    Display Mode
+                    <span class="info-icon" data-tooltip="Visual style. 'Trails' shows flow history. 'Velocity' highlights speed.">i</span>
+                </div>
+                <select id="visMode" class="custom-select">
+                    <option value="default">Default (Water)</option>
+                    <option value="trails">Trails (Green -> Red)</option>
+                    <option value="velocity">Velocity (Heat)</option>
+                </select>
+            </div>
+            <!-- Trail Config (Only visible in Trails mode) -->
+            <div id="trail-config" style="display:none;">
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span>Max Trail Segments</span>
+                        <span class="info-icon" data-tooltip="Maximum points stored per particle. Higher = longer possible tail, but more RAM.">i</span>
+                        <span id="val-trailLength">20</span>
+                    </div>
+                    <input type="range" id="trailLength" min="5" max="50" step="1" value="20">
+                </div>
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span>Trail Lifetime (s)</span>
+                        <span class="info-icon" data-tooltip="How long a trail segment stays visible. Short time = less clutter when movement stops.">i</span>
+                        <span id="val-trailLifetime">0.5</span>
+                    </div>
+                    <input type="range" id="trailLifetime" min="0.1" max="2.0" step="0.1" value="0.5">
+                </div>
+            </div>
+        </div>
+
+        <!-- Section: Performance & Quality -->
+        <div class="section-header collapsed" onclick="toggleSection(this)">Quality & Noise</div>
+        <div class="section-content collapsed">
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Physics Sub-steps</span>
+                    <span class="info-icon" data-tooltip="Calculations per frame. Higher = More solid fluid. Default 1 is fastest.">i</span>
+                    <span id="val-subSteps">1</span>
+                </div>
+                <input type="range" id="subSteps" min="1" max="5" step="1" value="1">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Thermal Noise</span>
+                    <span class="info-icon" data-tooltip="Micro-movements to prevent crystal 'foam' patterns.">i</span>
+                    <span id="val-thermalNoise">0.1</span>
+                </div>
+                <input type="range" id="thermalNoise" min="0" max="2.0" step="0.1" value="0.1">
+            </div>
+            <div class="checkbox-row">
+                <span class="checkbox-label">
+                    Dynamic Stabilization
+                    <span class="info-icon" data-tooltip="Auto-adjusts particle count to maintain FPS.">i</span>
+                </span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="opt-merge" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        
+        <!-- Section: Simulation Limits -->
+        <div class="section-header collapsed" onclick="toggleSection(this)">Simulation Config</div>
+        <div class="section-content collapsed">
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Max Particles</span>
+                    <span class="info-icon" data-tooltip="Max allowed particles. Type manually to override limits.">i</span>
+                    <input type="number" id="val-particleCount" class="num-input" value="2000">
+                </div>
+                <input type="range" id="particleCount" min="500" max="3000" step="100" value="2000">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Target FPS</span>
+                    <span class="info-icon" data-tooltip="Target framerate for stabilization.">i</span>
+                    <span id="val-targetFPS">60</span>
+                </div>
+                <input type="range" id="targetFPS" min="30" max="120" step="5" value="60">
+            </div>
+        </div>
+        
+        <!-- Section: Core Physics Parameters -->
+        <div class="section-header collapsed" onclick="toggleSection(this)">Physics Props</div>
+        <div class="section-content collapsed">
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Gravity</span>
+                    <span class="info-icon" data-tooltip="Downward pull strength.">i</span>
+                    <span id="val-gravity">2500</span>
+                </div>
+                <input type="range" id="gravity" min="0" max="4000" step="100" value="2500">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Viscosity</span>
+                    <span class="info-icon" data-tooltip="Fluid thickness/friction.">i</span>
+                    <span id="val-viscosity">0.01</span>
+                </div>
+                <input type="range" id="viscosity" min="0" max="0.1" step="0.001" value="0.01">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Radius</span>
+                    <span class="info-icon" data-tooltip="Particle interaction range.">i</span>
+                    <span id="val-radius">35</span>
+                </div>
+                <input type="range" id="radius" min="20" max="50" step="1" value="35">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Pressure</span>
+                    <span class="info-icon" data-tooltip="Repulsive force between particles.">i</span>
+                    <span id="val-pressure">3000</span>
+                </div>
+                <input type="range" id="pressure" min="1000" max="8000" step="100" value="3000">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Dampening</span>
+                    <span class="info-icon" data-tooltip="Air resistance (1.0 = Vacuum).">i</span>
+                    <span id="val-dampening">0.995</span>
+                </div>
+                <input type="range" id="dampening" min="0.950" max="1.000" step="0.001" value="0.995">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label">
+                    <span>Rest Threshold</span>
+                    <span class="info-icon" data-tooltip="Speed below which particles freeze to stop jitter.">i</span>
+                    <span id="val-restThreshold">8</span>
+                </div>
+                <input type="range" id="restThreshold" min="0" max="50" step="1" value="8">
+            </div>
+        </div>
+
+        <div style="padding-top: 12px;">
+            <button class="btn" id="reset-btn">Reset Simulation</button>
+            <button class="btn secondary" id="restore-btn" style="font-weight: normal; font-size: 0.8rem; padding: 8px; margin-top: 6px; background: rgba(15, 23, 42, 0.5);">Restore Defaults</button>
+        </div>
+        
+        <!-- Stats & Status Display -->
+        <div class="stat-box">
+            FPS: <span id="fps">0</span>
+            <br>
+            Status: 
+            <span class="status-badge merging" id="badge-merge">▼ MERGE</span>
+            <span class="status-badge splitting" id="badge-split">▲ SPLIT</span>
+            <span class="status-badge stable" id="badge-stable">● STABLE</span>
+            <span class="status-badge precision" id="badge-precision">★ HIGH PRECISION</span>
+            <br>
+            Particles: <span id="real-count">0</span> | Objects: <span id="obj-count">0</span>
+        </div>
+    </div>
+
+    <canvas id="simCanvas"></canvas>
+
+<script>
+/**
+ * HydroJS v4.11 - SPH Fluid Simulation Engine
+ * * Features:
+ * - Smoothed Particle Hydrodynamics (SPH) physics
+ * - Spatial Hashing for performance (O(N) neighborhood search)
+ * - Dynamic Particle Count Stabilization (PID-like control)
+ * - Rigid Body Interaction (Balls with buoyancy)
+ * - Multiple Visualization Modes (Pressure, Velocity, Trails)
+ * - Extensive UI controls
+ */
+
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d', { alpha: false }); // Alpha false for perf optimization
+
+// --- CONFIGURATION DEFAULTS ---
+const DEFAULTS = {
+    particleCount: 2000,
+    gravity: 2500,              
+    baseRadius: 35,         // Interaction radius (h)
+    targetDensity: 6,       // Rest density (rho0)    
+    pressureM: 3000,        // Gas constant (k)    
+    viscosity: 0.01,        // Viscosity coefficient (mu)
+    dampening: 0.995,       // Velocity damping (air resistance)
+    wallFriction: 0.4,          
+    restitution: 0.3,       // Bounciness
+    maxVelocity: 3000,      // Speed cap to prevent tunneling
+    maxForce: 50000,        // Force cap to prevent explosions
+    ballDensity: 1.0,
+    optStabilize: true,     // Enable dynamic merging/splitting
+    subSteps: 1,            // Physics steps per frame
+    targetFPS: 60,
+    hysteresis: 5,          // FPS buffer zone
+    maxParticleMass: 32,    // Max merge size
+    restThreshold: 8,       // Speed below which resting logic applies
+    restDamping: 0.97,      // Damping applied when resting
+    restFramesNeeded: 10,   // Frames needed below threshold to trigger rest
+    thermalNoise: 0.1,      // Micro-jitter to prevent crystallization
+    visMode: 'default',
+    trailLength: 20,        // Max segments in trail
+    trailLifetime: 0.5      // Seconds a trail segment lives
+};
+
+// Clone defaults into mutable config
+const CONFIG = { ...DEFAULTS };
+
+// --- GLOBAL STATE ---
+let particles = [];
+let objects = [];
+let width, height;
+let grid = []; 
+let cols, rows;
+let mouse = { x: 0, y: 0, active: false, tool: 'hand', handMode: 'attract', isRightDown: false }; 
+let brush = { x: 0, y: 0, active: false, radius: 30 };
+let lastFrameTime = performance.now();
+let accumulator = 0;
+const FIXED_DT = 1/120; // Internal physics tick rate
+let spawnTimer = 0;
+const SPAWN_RATE = 0.08; 
+
+// --- CLASS DEFINITIONS ---
+
+/**
+ * Fluid Particle
+ * Represents a single unit of fluid. Can merge with others to form super-particles.
+ */
+class Particle {
+    constructor(x, y, mass = 1) {
+        this.x = x; this.y = y;
+        this.vx = (Math.random() - 0.5) * 5;
+        this.vy = (Math.random() - 0.5) * 5;
+        this.fx = 0; this.fy = 0; // Force accumulators
+        this.density = 0; this.pressure = 0;
+        this.colorScale = 0; // Used for visualization color mapping
+        this.mass = mass;
+        this.radiusScale = Math.sqrt(mass); // Visual radius scales with mass
+        this.dead = false; // Mark for deletion
+        this.restTimer = 0; // Counter for resting logic
+        
+        this.trail = []; // History buffer for trails
+    }
+    
+    /**
+     * Updates the particle's trail history.
+     * Manages adding new points and removing old/expired ones.
+     * @param {number} currentTime - Current timestamp in ms
+     */
+    updateTrail(currentTime) {
+        // Add point only if moving significantly to save memory/draw calls
+        if (this.trail.length > 0) {
+            const last = this.trail[this.trail.length - 1];
+            const distSq = (this.x - last.x)**2 + (this.y - last.y)**2;
+            if (distSq > 9) { // 3px threshold
+                 this.trail.push({x: this.x, y: this.y, t: currentTime});
+            }
+        } else {
+            this.trail.push({x: this.x, y: this.y, t: currentTime});
+        }
+
+        // Enforce Max Length (Memory constraint)
+        while (this.trail.length > CONFIG.trailLength) {
+            this.trail.shift();
+        }
+        
+        // Filter Expired (Time constraint)
+        // Efficiently remove old nodes from the start of the queue
+        const expiration = currentTime - (CONFIG.trailLifetime * 1000);
+        while (this.trail.length > 0 && this.trail[0].t < expiration) {
+            this.trail.shift();
+        }
+    }
+}
+
+/**
+ * Rigid Body (Ball)
+ * Interacts with fluid particles via buoyancy and drag.
+ */
+class RigidBall {
+    constructor(x, y, radius, density) {
+        this.x = x; this.y = y;
+        this.radius = radius;
+        // Mass calculation scaled to match SPH particle mass range
+        this.mass = (Math.PI * radius * radius) * (density * 0.015); 
+        this.vx = 0; this.vy = 0;
+        this.fx = 0; this.fy = 0;
+        this.smoothFx = 0; // Force smoothing accumulators
+        this.smoothFy = 0;
+        this.restitution = 0.5;
+    }
+    
+    update(dt) {
+        // Smooth forces to prevent jittering from discrete particle impacts
+        this.smoothFx = this.smoothFx * 0.5 + this.fx * 0.5;
+        this.smoothFy = this.smoothFy * 0.5 + this.fy * 0.5;
+        
+        // Apply Gravity
+        this.smoothFy += CONFIG.gravity * this.mass;
+
+        // Integration (Euler)
+        this.vx += (this.smoothFx / this.mass) * dt;
+        this.vy += (this.smoothFy / this.mass) * dt;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        
+        // Resting Logic (same as particles)
+        const speed = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+        if (speed < CONFIG.restThreshold) {
+            this.vx *= CONFIG.restDamping;
+            this.vy *= CONFIG.restDamping;
+        } else {
+            this.vx *= CONFIG.dampening;
+            this.vy *= CONFIG.dampening;
+        }
+
+        // Wall Boundaries
+        const r = this.radius;
+        if (this.y > height - r) { this.y = height - r; this.vy *= -0.5; this.vx *= 0.9; }
+        if (this.y < r) { this.y = r; this.vy *= -0.5; }
+        if (this.x > width - r) { this.x = width - r; this.vx *= -0.5; }
+        if (this.x < r) { this.x = r; this.vx *= -0.5; }
+        
+        // Reset instantaneous forces
+        this.fx = 0; this.fy = 0;
+    }
+}
+
+// --- SPH KERNELS ---
+// These mathematical functions define how particles influence each other based on distance.
+
+// Poly6 Kernel - Good for Density calculation (smooth falloff)
+const PI = Math.PI;
+function poly6(r2, h) {
+    const h2 = h * h;
+    if (r2 < 0 || r2 > h2) return 0;
+    const term = h2 - r2;
+    return (4 / (PI * Math.pow(h, 8))) * term * term * term;
+}
+
+// Spiky Gradient Kernel - Good for Pressure/Force calculation (avoids clustering)
+function spikyGradient(r, h) {
+    if (r <= 0 || r > h) return 0;
+    const term = h - r;
+    return (-30 / (PI * Math.pow(h, 5))) * term * term;
+}
+
+// --- CORE ENGINE FUNCTIONS ---
+
+function init() {
+    resize();
+    spawnParticles();
+    lastFrameTime = performance.now();
+    requestAnimationFrame(loop);
+    setupTooltips();
+}
+
+function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    // Grid size based on max interaction radius ensures neighbors are always in adjacent cells
+    cols = Math.ceil(width / 20); 
+    rows = Math.ceil(height / 20);
+    grid = new Array(cols * rows).fill(null).map(() => []);
+}
+
+function spawnParticles() {
+    particles = [];
+    const count = CONFIG.particleCount; 
+    const gridSize = Math.ceil(Math.sqrt(count));
+    const startX = width / 2 - (gridSize * 8) / 2;
+    const startY = height / 4; 
+    for (let i = 0; i < count; i++) {
+        particles.push(new Particle(startX + (i % gridSize) * 8 + Math.random(), startY + Math.floor(i / gridSize) * 8 + Math.random()));
+    }
+    updateCountDisplay('real-count', particles.length);
+}
+
+/**
+ * Spatial Hashing
+ * Buckets particles into a grid so we only check neighbors nearby.
+ * Reduces complexity from O(N^2) to approx O(N).
+ */
+function updateSpatialHash() {
+    for (let i = 0; i < grid.length; i++) grid[i].length = 0;
+    const cellSize = CONFIG.baseRadius; 
+    const currentCols = Math.ceil(width / cellSize);
+    for (let p of particles) {
+        if (p.dead) continue;
+        let gx = Math.floor(p.x / cellSize);
+        let gy = Math.floor(p.y / cellSize);
+        // Clamp to grid bounds
+        if (gx < 0) gx = 0; else if (gx >= currentCols) gx = currentCols - 1;
+        if (gy < 0) gy = 0; else if (gy >= rows) gy = rows - 1; 
+        const index = gx + gy * currentCols;
+        if(index < grid.length && index >= 0) grid[index].push(p);
+    }
+}
+
+/**
+ * Main Physics Step
+ * Calculates Density, Pressure, and Forces for all particles.
+ */
+function stepPhysics(dt, mergeProbability, currentTime) { // Added currentTime for trail updates
+    const h = CONFIG.baseRadius;
+    const h2 = h * h;
+    const currentCols = Math.ceil(width / h);
+
+    // 1. Density & Pressure Calculation
+    for (let p of particles) {
+        if (p.dead) continue;
+        p.density = 0;
+        
+        // Grid Lookup (Current cell + neighbors)
+        let gx = Math.floor(p.x / h);
+        let gy = Math.floor(p.y / h);
+        for (let x = -1; x <= 1; x++) {
+            for (let y = -1; y <= 1; y++) {
+                const cellIndex = (gx + x) + (gy + y) * currentCols;
+                if (cellIndex >= 0 && cellIndex < grid.length) {
+                    const cell = grid[cellIndex];
+                    if(cell) {
+                         for (let n of cell) {
+                            if (n.dead) continue;
+                            const dx = p.x - n.x; 
+                            const dy = p.y - n.y;
+                            const r2 = dx*dx + dy*dy;
+                            if (r2 < h2) p.density += poly6(r2, h) * n.mass;
+                        }
+                    }
+                }
+            }
+        }
+        // Equation of State (Tait equation approx)
+        p.density = Math.max(0.1, p.density); 
+        p.colorScale = Math.min(1, (p.density - CONFIG.targetDensity) / 6); // For visualization
+        
+        const densityError = p.density - CONFIG.targetDensity;
+        let pressure = CONFIG.pressureM * densityError; 
+        if (densityError > 0) pressure += 20 * densityError * densityError; // Quadratic term for stiffness
+        p.pressure = Math.max(0, pressure);
+        p.fx = 0; p.fy = 0;
+    }
+
+    // 2. Force Calculation (Pressure + Viscosity)
+    for (let p of particles) {
+        if (p.dead) continue;
+        let gx = Math.floor(p.x / h);
+        let gy = Math.floor(p.y / h);
+        for (let x = -1; x <= 1; x++) {
+            for (let y = -1; y <= 1; y++) {
+                const cellIndex = (gx + x) + (gy + y) * currentCols;
+                if (cellIndex >= 0 && cellIndex < grid.length) {
+                    const cell = grid[cellIndex];
+                    if(cell) {
+                        for (let n of cell) {
+                            if (p === n || n.dead) continue;
+                            const dx = n.x - p.x; 
+                            const dy = n.y - p.y;
+                            const r2 = dx*dx + dy*dy;
+                            if (r2 < h2 && r2 > 0.0001) {
+                                const r = Math.sqrt(r2);
+                                const nx = dx / r; 
+                                const ny = dy / r;
+
+                                // --- MERGE LOGIC (Dynamic Stabilization) ---
+                                if (mergeProbability > 0 && Math.random() < mergeProbability && r < h * 0.2 && p.mass + n.mass <= CONFIG.maxParticleMass) {
+                                    const dvx = p.vx - n.vx; const dvy = p.vy - n.vy;
+                                    // Only merge if relative velocity is low
+                                    if (Math.sqrt(dvx*dvx + dvy*dvy) < 80) {
+                                        // Merge N into P
+                                        const tm = p.mass + n.mass;
+                                        p.vx = (p.vx * p.mass + n.vx * n.mass) / tm;
+                                        p.vy = (p.vy * p.mass + n.vy * n.mass) / tm;
+                                        p.x = (p.x * p.mass + n.x * n.mass) / tm;
+                                        p.y = (p.y * p.mass + n.y * n.mass) / tm;
+                                        p.mass = tm;
+                                        p.radiusScale = Math.sqrt(tm);
+                                        n.dead = true; continue; 
+                                    }
+                                }
+
+                                // Pressure Force
+                                const grad = spikyGradient(r, h);
+                                const pTerm = -(p.pressure + n.pressure) / (2 * n.density) * grad;
+                                p.fx += pTerm * nx * n.mass;
+                                p.fy += pTerm * ny * n.mass;
+
+                                // Viscosity Force
+                                const visc_W = (h - r) / h;
+                                const vx_diff = n.vx - p.vx;
+                                const vy_diff = n.vy - p.vy;
+                                const viscTerm = CONFIG.viscosity * visc_W * 150; 
+                                p.fx += vx_diff * viscTerm * n.mass; 
+                                p.fy += vy_diff * viscTerm * n.mass;
+                                
+                                // Short-range repulsion (Prevent clumping)
+                                if (r < h * 0.4) {
+                                    const repulse = (h * 0.4 - r) * 6000;
+                                    p.fx -= nx * repulse * n.mass;
+                                    p.fy -= ny * repulse * n.mass;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Object Interactions (Brush & Balls)
+    // Brush Interaction
+    if (brush.active) {
+        const pR2 = brush.radius * brush.radius;
+        for (let p of particles) {
+            if (p.dead) continue;
+            const dx = p.x - brush.x; const dy = p.y - brush.y;
+            const dist2 = dx*dx + dy*dy;
+            if (dist2 < pR2) {
+                const dist = Math.sqrt(dist2);
+                const nx = dx / dist; const ny = dy / dist;
+                const pen = brush.radius - dist;
+                p.x += nx * pen;
+                p.vx += nx * 150; p.vy += ny * 150;
+            }
+        }
+        for (let b of objects) {
+            const dx = b.x - brush.x; const dy = b.y - brush.y;
+            const dist2 = dx*dx + dy*dy;
+            const minDist = b.radius + brush.radius;
+            if (dist2 < minDist*minDist) {
+                const dist = Math.sqrt(dist2);
+                const nx = dx/dist; const ny = dy/dist;
+                const pen = minDist - dist;
+                b.x += nx * pen;
+                b.vx += nx * 150; b.vy += ny * 150;
+            }
+        }
+    }
+
+    // Rigid Body - Fluid Interaction
+    for (let b of objects) {
+        b.update(dt);
+        let displacedMass = 0;
+        let fluidVelocityX = 0;
+        let fluidVelocityY = 0;
+        let collidingCount = 0;
+        const searchDist = b.radius + h; 
+        const startGx = Math.floor((b.x - searchDist) / h);
+        const endGx = Math.floor((b.x + searchDist) / h);
+        const startGy = Math.floor((b.y - searchDist) / h);
+        const endGy = Math.floor((b.y + searchDist) / h);
+        
+        for (let gx = startGx; gx <= endGx; gx++) {
+            for (let gy = startGy; gy <= endGy; gy++) {
+                 const cellIndex = gx + gy * currentCols;
+                 if (cellIndex >= 0 && cellIndex < grid.length) {
+                     const cell = grid[cellIndex];
+                     if (cell) {
+                         for (let p of cell) {
+                             if (p.dead) continue;
+                             const dx = p.x - b.x; const dy = p.y - b.y;
+                             const r2 = dx*dx + dy*dy;
+                             
+                             // Buoyancy: Calculate overlapping fluid mass
+                             const interactionRadius = b.radius + h;
+                             if (r2 < interactionRadius * interactionRadius) {
+                                 const dist = Math.sqrt(r2);
+                                 const volumeContrib = Math.max(0, 1 - (dist / interactionRadius));
+                                 displacedMass += volumeContrib * p.mass * 5;
+                                 fluidVelocityX += p.vx; fluidVelocityY += p.vy;
+                                 collidingCount++;
+                             }
+                             
+                             // Collision: Hard shell contact
+                             const collisionDist = b.radius + (8 * p.radiusScale); 
+                             if (r2 < collisionDist * collisionDist) {
+                                 const dist = Math.sqrt(r2);
+                                 const nx = dx / dist; const ny = dy / dist;
+                                 const pen = collisionDist - dist;
+                                 p.x += nx * pen;
+                                 const kick = 100;
+                                 p.vx += nx * kick * dt; p.vy += ny * kick * dt;
+                                 b.vx -= (nx * kick * dt * p.mass) / b.mass;
+                                 b.vy -= (ny * kick * dt * p.mass) / b.mass;
+                             }
+                         }
+                     }
+                 }
+            }
+        }
+        
+        // Apply Buoyancy & Drag to Ball
+        if (displacedMass > 0) {
+            const buoyancyForce = displacedMass * CONFIG.gravity * 0.5;
+            b.fy -= buoyancyForce;
+            const avgFluidVx = fluidVelocityX / collidingCount;
+            const avgFluidVy = fluidVelocityY / collidingCount;
+            const dragCoeff = 2.0;
+            b.fx += (avgFluidVx - b.vx) * dragCoeff * dt * displacedMass;
+            b.fy += (avgFluidVy - b.vy) * dragCoeff * dt * displacedMass;
+        }
+    }
+
+    // 4. Integration & Boundary Handling
+    for (let p of particles) {
+        if (p.dead) continue;
+        p.fy += CONFIG.gravity; 
+        p.vx += (p.fx / p.mass) * dt; 
+        p.vy += (p.fy / p.mass) * dt;
+
+        // Hand Tool
+        if (mouse.active && mouse.tool === 'hand') {
+            const dx = p.x - mouse.x; const dy = p.y - mouse.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < 150) { 
+                const s = Math.max(0, (150 - dist) / 150); 
+                const force = (15000 / p.mass) * s * s * (3 - 2 * s);
+                const dir = mouse.handMode === 'repel' ? 1 : -1;
+                p.vx += dir * (dx/dist) * force * dt;
+                p.vy += dir * (dy/dist) * force * dt;
+            }
+        }
+        
+        const speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+        
+        // Smart Resting Logic
+        if (speed < CONFIG.restThreshold) {
+             p.restTimer++;
+             if (p.restTimer > CONFIG.restFramesNeeded) {
+                 p.vx *= CONFIG.restDamping; p.vy *= CONFIG.restDamping;
+                 // Thermal noise to prevent crystallization
+                 if (CONFIG.thermalNoise > 0) {
+                     p.vx += (Math.random() - 0.5) * CONFIG.thermalNoise;
+                     p.vy += (Math.random() - 0.5) * CONFIG.thermalNoise;
+                 }
+             } else {
+                 p.vx *= CONFIG.dampening; p.vy *= CONFIG.dampening;
+             }
+        } else {
+             p.restTimer = 0; 
+             p.vx *= CONFIG.dampening; p.vy *= CONFIG.dampening;
+        }
+        
+        // Velocity Cap
+        const vMag = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+        if (vMag > CONFIG.maxVelocity) {
+            const scale = CONFIG.maxVelocity / vMag;
+            p.vx *= scale; p.vy *= scale;
+        }
+        
+        // Position Update
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        
+        // Boundaries
+        const r = 8 * p.radiusScale; 
+        const elast = CONFIG.restitution; 
+        const fric = 1 - CONFIG.wallFriction;
+        if (p.y > height - r) { p.y = height - r; p.vy *= -elast; p.vx *= fric; } 
+        else if (p.y < r) { p.y = r; p.vy *= -elast; p.vx *= fric; }
+        if (p.x > width - r) { p.x = width - r; p.vx *= -elast; p.vy *= fric; } 
+        else if (p.x < r) { p.x = r; p.vx *= -elast; p.vy *= fric; }
+        
+        // Visualization Color
+        if (CONFIG.visMode === 'velocity') {
+            p.colorScale = Math.min(1, speed / 400);
+        } else {
+            p.colorScale = Math.min(1, (p.density - CONFIG.targetDensity) / 12);
+        }
+        
+        // Update Trails
+        if (CONFIG.visMode === 'trails') {
+            p.updateTrail(currentTime); // Using the passed currentTime
+        } else if (p.trail.length > 0) {
+            p.trail = []; // Free memory if trails disabled
+        }
+    }
+}
+
+// --- LOGIC: SPLITTING & PRUNING ---
+
+/**
+ * Splits super-particles back into smaller ones when FPS is high.
+ */
+function attemptSplitting(splitCount) {
+    if (particles.length >= CONFIG.particleCount) return; 
+    let splits = 0;
+    const len = particles.length;
+    // Random starting point to ensure even splitting across the pool
+    const startIdx = Math.floor(Math.random() * len);
+    for (let i = 0; i < len; i++) {
+        const idx = (startIdx + i) % len;
+        const p = particles[idx];
+        if (!p || p.dead) continue;
+        if (p.mass > 1.5) {
+            const halfMass = p.mass / 2;
+            const offset = 4 * Math.sqrt(halfMass); 
+            // Create child
+            const child = new Particle(p.x + offset, p.y, halfMass);
+            child.vx = p.vx + (Math.random()-0.5)*2; 
+            child.vy = p.vy + (Math.random()-0.5)*2;
+            child.colorScale = p.colorScale;
+            particles.push(child);
+            // Shrink parent
+            p.mass = halfMass;
+            p.radiusScale = Math.sqrt(halfMass);
+            p.x -= offset;
+            p.vx -= (Math.random()-0.5)*2;
+            splits++;
+            if (splits >= splitCount) break; 
+        }
+    }
+    if (splits > 0) updateCountDisplay('real-count', particles.length);
+}
+
+function pruneDeadParticles() {
+    const initialLen = particles.length;
+    particles = particles.filter(p => !p.dead);
+    if (particles.length !== initialLen) updateCountDisplay('real-count', particles.length);
+}
+
+// --- UI UPDATES ---
+
+function updateCountDisplay(id, val) {
+    const el = document.getElementById(id);
+    if (el) {
+        if (el.tagName === 'INPUT') el.value = val;
+        else el.innerText = val;
+    }
+}
+
+function updateInputDisplay(id, val) {
+    const el = document.getElementById(`val-${id}`);
+    if (el) {
+        if (el.tagName === 'INPUT') el.value = val;
+        else el.innerText = val;
+    }
+}
+
+// --- MAIN RENDER LOOP ---
+
+let fps = 60;
+let lastFpsTime = 0;
+let frameCounter = 0;
+let avgFps = 60; 
+
+function loop(timestamp) {
+    let frameTime = (timestamp - lastFrameTime) / 1000; 
+    lastFrameTime = timestamp;
+    if (frameTime > 0.25) frameTime = 0.25;
+    accumulator += frameTime;
+    
+    // Continuous Spawning Logic
+    if (mouse.isRightDown) {
+        spawnTimer += frameTime;
+        while (spawnTimer > SPAWN_RATE) {
+            particles.push(new Particle(mouse.x, mouse.y));
+            updateCountDisplay('real-count', particles.length);
+            spawnTimer -= SPAWN_RATE;
+        }
+    }
+
+    // FPS & Stats Updates (Every 250ms)
+    if (timestamp - lastFpsTime >= 250) { 
+        const instantaneousFps = frameCounter * 4;
+        avgFps = (avgFps * 0.7) + (instantaneousFps * 0.3); // Smooth FPS
+        document.getElementById('fps').innerText = Math.round(avgFps);
+        frameCounter = 0;
+        lastFpsTime = timestamp;
+        
+        // Status Badges
+        const bMerge = document.getElementById('badge-merge');
+        const bSplit = document.getElementById('badge-split');
+        const bStable = document.getElementById('badge-stable');
+        const bPrecision = document.getElementById('badge-precision');
+        bMerge.style.display = 'none'; bSplit.style.display = 'none'; bStable.style.display = 'none';
+        
+        if (CONFIG.subSteps > 1) bPrecision.style.display = 'inline';
+        else bPrecision.style.display = 'none';
+
+        if (CONFIG.optStabilize && CONFIG.subSteps === 1) {
+            const delta = avgFps - CONFIG.targetFPS;
+            if (delta < -CONFIG.hysteresis) bMerge.style.display = 'inline';
+            else if (delta > CONFIG.hysteresis) bSplit.style.display = 'inline';
+            else bStable.style.display = 'inline';
+        }
+        updateCountDisplay('obj-count', objects.length);
+    }
+    frameCounter++;
+
+    // Dynamic Stabilization Logic
+    let mergeProb = 0;
+    let splitAmount = 0;
+    if (CONFIG.optStabilize && CONFIG.subSteps === 1) {
+        const delta = avgFps - CONFIG.targetFPS; 
+        if (delta < -CONFIG.hysteresis) mergeProb = Math.min(0.5, Math.abs(delta) * 0.005); 
+        else if (delta > CONFIG.hysteresis) splitAmount = Math.ceil((delta - CONFIG.hysteresis) / 15);
+    }
+
+    // Physics Sub-Stepping
+    const subSteps = CONFIG.subSteps;
+    const stepDt = FIXED_DT / subSteps;
+    
+    let steps = 0;
+    while (accumulator >= FIXED_DT && steps < 5) {
+        updateSpatialHash(); 
+        for(let i=0; i<subSteps; i++) stepPhysics(stepDt, mergeProb, timestamp); // Passing timestamp here
+        accumulator -= FIXED_DT;
+        steps++;
+    }
+    
+    if (mergeProb > 0) pruneDeadParticles();
+    if (splitAmount > 0) attemptSplitting(splitAmount);
+
+    // Rendering
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, width, height);
+    
+    ctx.globalCompositeOperation = 'source-over';
+    
+    // Draw Balls
+    for (let b of objects) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        const shade = Math.max(50, Math.min(255, 255 - (b.mass * 20)));
+        ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+        ctx.fill();
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
+
+    // Draw Brush
+    if (mouse.tool === 'brush' && brush.active) {
+        ctx.beginPath();
+        ctx.arc(brush.x, brush.y, brush.radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    // Visualization Logic
+    if (CONFIG.visMode === 'pressure') {
+        ctx.globalCompositeOperation = 'source-over'; // Opaque
+    } else {
+        ctx.globalCompositeOperation = 'screen'; // Additive glow
+    }
+
+    // Draw Trails
+    if (CONFIG.visMode === 'trails') {
+        ctx.lineWidth = 2;
+        ctx.globalCompositeOperation = 'source-over';
+        
+        const trailLifetimeMs = CONFIG.trailLifetime * 1000;
+        
+        for (let p of particles) {
+             if (p.trail.length > 1) {
+                 // Draw segments
+                 for(let i=0; i<p.trail.length - 1; i++) {
+                     const node = p.trail[i];
+                     const nextNode = p.trail[i+1];
+                     const age = timestamp - node.t;
+                     
+                     let life = 1 - (age / trailLifetimeMs);
+                     if (life < 0) continue;
+
+                     const t = i / (p.trail.length - 1); 
+                     const r = Math.floor(255 * (1-t));
+                     const g = Math.floor(255 * t);
+                     const b = 0;
+                     
+                     ctx.beginPath();
+                     ctx.moveTo(node.x, node.y);
+                     ctx.lineTo(nextNode.x, nextNode.y);
+                     ctx.strokeStyle = `rgba(${r},${g},${b},${life})`;
+                     ctx.stroke();
+                 }
+             } else {
+                 // Fallback point
+                 ctx.beginPath();
+                 ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                 ctx.fillStyle = '#0f0';
+                 ctx.fill();
+             }
+        }
+    } else {
+        // Normal Rendering
+        for (let p of particles) {
+            ctx.beginPath();
+            const r_vis = 10 * p.radiusScale; 
+            ctx.arc(p.x, p.y, r_vis, 0, Math.PI * 2);
+            
+            let r, g, b, a;
+            const mix = p.colorScale; 
+
+            if (CONFIG.visMode === 'pressure') {
+                // Deep Pressure Mode
+                // Dark navy for high pressure, Bright blue for low
+                const darkMix = Math.max(0, 1 - mix * 1.2); 
+                
+                r = 20 + (56 * darkMix);  
+                g = 30 + (189 * darkMix); 
+                b = 60 + (248 * darkMix); 
+                a = 1.0; // Full opacity
+                
+            } else if (CONFIG.visMode === 'velocity') {
+                r = 56 + (200 * mix);
+                g = 189 + (66 * mix);
+                b = 248; 
+                if (mix > 0.8) { r = 255; g = 255; b = 200; }
+                a = 0.8;
+            } else {
+                // Default
+                r = 56 + (200 * mix);
+                g = 189 + (66 * mix);
+                b = 248; 
+                a = 0.8;
+            }
+
+            ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+            ctx.fill();
+        }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    
+    requestAnimationFrame(loop);
+}
+
+// --- UI & INTERACTION HANDLERS ---
+
+function toggleSection(header) {
+    header.classList.toggle('collapsed');
+    const content = header.nextElementSibling;
+    content.classList.toggle('collapsed');
+}
+
+function setTool(toolName) {
+    mouse.tool = toolName;
+    document.querySelectorAll('.tool-btn').forEach(el => el.classList.remove('selected'));
+    document.getElementById(`tool-${toolName}`).classList.add('selected');
+    document.getElementById('ball-controls').style.display = (toolName === 'ball') ? 'block' : 'none';
+    const modeBtn = document.getElementById('mode-btn');
+    if (toolName === 'hand') modeBtn.style.display = 'block';
+    else modeBtn.style.display = 'none';
+}
+
+// Global Tooltip Logic with Edge Detection
+function setupTooltips() {
+    const tooltip = document.getElementById('global-tooltip');
+    if (!tooltip) return; // Ensure tooltip exists before proceeding
+
+    document.querySelectorAll('.info-icon').forEach(icon => {
+        icon.addEventListener('mousemove', (e) => {
+            tooltip.innerText = icon.getAttribute('data-tooltip');
+            tooltip.style.display = 'block';
+            
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const w = tooltipRect.width;
+            const h = tooltipRect.height;
+            const padding = 15;
+            
+            let left = e.clientX + padding;
+            let top = e.clientY + padding;
+            
+            // Prevent going off right edge
+            if (left + w > window.innerWidth) {
+                left = e.clientX - w - padding;
+            }
+            
+            // Prevent going off bottom edge
+            if (top + h > window.innerHeight) {
+                top = e.clientY - h - padding;
+            }
+            
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+        });
+        icon.addEventListener('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+    });
+}
+
+// Menu Toggle
+document.getElementById('menu-toggle').addEventListener('click', () => {
+    document.getElementById('controls').classList.toggle('hidden-panel');
+});
+
+// Visualization Mode Switch
+document.getElementById('visMode').addEventListener('change', (e) => {
+    CONFIG.visMode = e.target.value;
+    
+    const trailConfig = document.getElementById('trail-config');
+    if (CONFIG.visMode === 'trails') {
+        trailConfig.style.display = 'block';
+    } else {
+        trailConfig.style.display = 'none';
+        particles.forEach(p => p.trail = []); // Clear trails to free memory
+    }
+});
+
+// Handle Resizing
+window.addEventListener('resize', () => { resize(); spawnParticles(); });
+
+// Map Input Elements to Config
+const inputs = {
+    particleCount: { id: 'particleCount', key: 'particleCount', isInt: true },
+    gravity: { id: 'gravity', key: 'gravity' },
+    viscosity: { id: 'viscosity', key: 'viscosity' },
+    pressure: { id: 'pressure', key: 'pressureM' },
+    radius: { id: 'radius', key: 'baseRadius' },
+    dampening: { id: 'dampening', key: 'dampening' },
+    targetFPS: { id: 'targetFPS', key: 'targetFPS', isInt: true },
+    ballDensity: { id: 'ballDensity', key: 'ballDensity' },
+    subSteps: { id: 'subSteps', key: 'subSteps', isInt: true },
+    thermalNoise: { id: 'thermalNoise', key: 'thermalNoise' },
+    restThreshold: { id: 'restThreshold', key: 'restThreshold' },
+    trailLength: { id: 'trailLength', key: 'trailLength', isInt: true },
+    trailLifetime: { id: 'trailLifetime', key: 'trailLifetime' }
+};
+
+Object.keys(inputs).forEach(key => {
+    const item = inputs[key];
+    const el = document.getElementById(item.id);
+    if (el) {
+        el.addEventListener('input', (e) => {
+            let val = parseFloat(e.target.value);
+            if (item.isInt) val = Math.round(val);
+            CONFIG[item.key] = val;
+            updateInputDisplay(item.id, val);
+            if (item.id === 'radius') resize();
+        });
+    }
+});
+
+// Manual Particle Input Handling
+const particleInput = document.getElementById('val-particleCount');
+if (particleInput) {
+    particleInput.addEventListener('change', (e) => {
+        let val = parseInt(e.target.value);
+        CONFIG.particleCount = val;
+        document.getElementById('particleCount').value = val;
+    });
+}
+
+// Restore Defaults Button
+document.getElementById('restore-btn').addEventListener('click', () => {
+    Object.assign(CONFIG, DEFAULTS);
+    
+    // Reset UI
+    Object.keys(inputs).forEach(key => {
+        const item = inputs[key];
+        const el = document.getElementById(item.id);
+        if (el) {
+            el.value = CONFIG[item.key];
+            updateInputDisplay(item.id, CONFIG[item.key]);
+        }
+    });
+    
+    document.getElementById('opt-merge').checked = CONFIG.optStabilize;
+    document.getElementById('visMode').value = 'default';
+    document.getElementById('val-particleCount').value = CONFIG.particleCount;
+    document.getElementById('trail-config').style.display = 'none';
+    
+    resize();
+});
+
+document.getElementById('opt-merge').addEventListener('change', (e) => {
+    CONFIG.optStabilize = e.target.checked;
+    // Badges handled in loop
+});
+
+document.getElementById('reset-btn').addEventListener('click', () => { 
+    resize(); 
+    spawnParticles(); 
+    objects = []; 
+});
+
+const modeBtn = document.getElementById('mode-btn');
+modeBtn.addEventListener('click', () => {
+    mouse.handMode = mouse.handMode === 'attract' ? 'repel' : 'attract';
+    modeBtn.innerText = `Hand Mode: ${mouse.handMode.charAt(0).toUpperCase() + mouse.handMode.slice(1)}`;
+});
+
+// Input Interaction
+const handleInteraction = (e) => {
+    let cx, cy;
+    if (e.touches && e.touches.length > 0) {
+        cx = e.touches[0].clientX;
+        cy = e.touches[0].clientY;
+    } else {
+        cx = e.clientX;
+        cy = e.clientY;
+    }
+    mouse.x = cx; mouse.y = cy;
+    if (mouse.tool === 'brush') {
+        brush.x = cx; brush.y = cy;
+    }
+};
+
+const handleStart = (e) => {
+    handleInteraction(e);
+    mouse.active = true;
+    if (mouse.tool === 'ball') {
+        // Debounce ball spawn
+        if (e.type === 'mousedown' || e.type === 'touchstart') {
+            objects.push(new RigidBall(mouse.x, mouse.y, 25, CONFIG.ballDensity));
+            updateCountDisplay('obj-count', objects.length);
+        }
+    }
+    else if (mouse.tool === 'brush') {
+        brush.active = true;
+        brush.x = mouse.x; brush.y = mouse.y;
+    }
+};
+
+const handleEnd = () => {
+    mouse.active = false;
+    brush.active = false;
+    mouse.isRightDown = false; 
+};
+
+canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 2) { 
+        mouse.isRightDown = true; 
+        particles.push(new Particle(e.clientX, e.clientY));
+        updateCountDisplay('real-count', particles.length);
+    } else {
+        handleStart(e);
+    }
+});
+window.addEventListener('mouseup', handleEnd);
+canvas.addEventListener('mousemove', handleInteraction);
+canvas.addEventListener('touchstart', (e) => { handleStart(e); e.preventDefault(); });
+canvas.addEventListener('touchend', handleEnd);
+canvas.addEventListener('touchmove', handleInteraction);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+init();
+</script>
+</body>
+</html>
