@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HydroJS GL - Realistic Physics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; font-family: 'Inter', sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+        
+        #controls {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px);
+            padding: 12px; border-radius: 16px;
+            border: 1px solid rgba(255,255,255,0.1);
+            width: 300px; max-height: 85vh; overflow-y: auto;
+            box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.6); z-index: 10;
+        }
+        
+        #controls::-webkit-scrollbar { width: 4px; }
+        #controls::-webkit-scrollbar-thumb { background-color: #38bdf8; }
+
+        h1 { font-size: 1.1rem; font-weight: 700; color: #38bdf8; margin-bottom: 10px; }
+        .badge-gl { font-size: 0.6em; background: #38bdf8; color: #0f172a; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+        
+        .slider-container { margin-bottom: 12px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); }
+        .slider-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: #cbd5e1; margin-bottom: 6px; }
+        
+        input[type="range"] { -webkit-appearance: none; width: 100%; height: 4px; background: #334155; border-radius: 2px; outline: none; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: #38bdf8; border-radius: 50%; cursor: pointer; transition: transform 0.1s; }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+        .btn { background: #38bdf8; color: #0f172a; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 700; width: 100%; font-size: 0.9rem; margin-top: 10px; transition: background 0.2s; }
+        .btn:hover { background: #7dd3fc; }
+
+        .stat-box { font-family: monospace; font-size: 0.75rem; color: #94a3b8; margin-top: 12px; text-align: center; }
+        .sub-text { font-size: 0.7rem; color: #64748b; margin-top: -4px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+
+    <div id="controls">
+        <h1>HydroJS GL <span class="badge-gl">REALISTIC</span></h1>
+
+        <div class="slider-container">
+            <div class="slider-label"><span>Particle Count</span><span id="val-count">4096</span></div>
+            <input type="range" id="texSize" min="32" max="128" step="32" value="64">
+        </div>
+        <div class="slider-container">
+            <div class="slider-label"><span>Gravity</span><span id="val-gravity">80</span></div>
+            <input type="range" id="gravity" min="0" max="150" step="5" value="80">
+        </div>
+        <div class="slider-container">
+            <div class="slider-label"><span>Viscosity</span><span id="val-visc">0.02</span></div>
+            <input type="range" id="visc" min="0" max="0.1" step="0.001" value="0.02">
+        </div>
+        <div class="slider-container">
+            <div class="slider-label"><span>Pressure Stiffness</span><span id="val-pressure">1.0</span></div>
+            <input type="range" id="pressure" min="0.1" max="5.0" step="0.1" value="1.0">
+        </div>
+        <div class="slider-container">
+            <div class="slider-label"><span>Interaction Radius</span><span id="val-radius">0.04</span></div>
+            <input type="range" id="radius" min="0.02" max="0.08" step="0.001" value="0.04">
+            <div class="sub-text">Linked to visual size & mouse range</div>
+        </div>
+        <div class="slider-container">
+            <div class="slider-label"><span>Trail Persistence</span><span id="val-trail">0.94</span></div>
+            <input type="range" id="trail" min="0.0" max="0.99" step="0.01" value="0.94">
+        </div>
+        <div class="slider-container">
+            <div class="slider-label"><span>Color Mode</span><span id="val-color">Velocity</span></div>
+            <input type="range" id="colorMode" min="0" max="1" step="1" value="0">
+        </div>
+
+        <button class="btn" id="reset-btn">Reset Simulation</button>
+        
+        <div class="stat-box">
+            FPS: <span id="fps">60</span><br>
+            <span style="font-size: 0.7em; opacity: 0.7;">Left Click: Repel | Right Click: Attract</span>
+        </div>
+    </div>
+
+    <canvas id="glCanvas"></canvas>
+
+<!-- --- SHADERS --- -->
+
+<!-- 1. Common Vertex Shader -->
+<script type="x-shader/x-vertex" id="vert-quad">
+#version 300 es
+in vec4 a_position;
+void main() {
+    gl_Position = a_position;
+}
+</script>
+
+<!-- 2. Density Calculation -->
+<script type="x-shader/x-fragment" id="frag-density">
+#version 300 es
+precision highp float;
+
+uniform sampler2D u_posTex;
+uniform float u_radius;
+uniform float u_count;
+
+out vec4 outDensity;
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / u_count;
+    vec3 myPos = texture(u_posTex, uv).xyz;
+
+    float density = 0.0;
+    float h = u_radius;
+    float h2 = h * h;
+
+    for (float y = 0.0; y < u_count; y++) {
+        for (float x = 0.0; x < u_count; x++) {
+            vec2 neighborUV = vec2(x + 0.5, y + 0.5) / u_count;
+            vec3 nPos = texture(u_posTex, neighborUV).xyz;
+            
+            vec3 diff = myPos - nPos;
+            float r2 = dot(diff, diff);
+            
+            if (r2 < h2) {
+                float term = h2 - r2;
+                density += term * term * term;
+            }
+        }
+    }
+    
+    outDensity = vec4(density, 0.0, 0.0, 1.0);
+}
+</script>
+
+<!-- 3. Physics Update (Velocity) -->
+<script type="x-shader/x-fragment" id="frag-velocity">
+#version 300 es
+precision highp float;
+
+uniform sampler2D u_posTex;
+uniform sampler2D u_velTex;
+uniform sampler2D u_densityTex;
+
+uniform float u_count;
+uniform float u_radius;
+uniform float u_dt;
+uniform float u_gravity;
+uniform float u_viscosity;
+uniform float u_pressureM;
+uniform vec4 u_mouse; 
+
+out vec4 outVelocity;
+
+float rand(vec2 co){
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / u_count;
+    
+    vec3 pos = texture(u_posTex, uv).xyz;
+    vec3 vel = texture(u_velTex, uv).xyz;
+    float myDensity = texture(u_densityTex, uv).x;
+    
+    float restDensity = 350.0 * pow(u_radius, 4.0) * u_count; 
+    float myPressure = max(0.0, (myDensity - restDensity) * u_pressureM);
+
+    vec2 force = vec2(0.0, 0.0);
+    float h = u_radius;
+    float h2 = h * h;
+
+    for (float y = 0.0; y < u_count; y++) {
+        for (float x = 0.0; x < u_count; x++) {
+            vec2 neighborUV = vec2(x + 0.5, y + 0.5) / u_count;
+            vec3 nPos = texture(u_posTex, neighborUV).xyz;
+            
+            vec3 diff = pos - nPos;
+            float r2 = dot(diff, diff);
+            
+            if (r2 > 0.000001 && r2 < h2) {
+                float r = sqrt(r2);
+                vec2 dir = diff.xy / r;
+                
+                float nDensity = texture(u_densityTex, neighborUV).x;
+                float nPressure = max(0.0, (nDensity - restDensity) * u_pressureM);
+                
+                float term = h - r;
+                float kernel = term * term;
+                
+                float pForce = (myPressure + nPressure) * kernel;
+                force += dir * pForce; 
+
+                vec3 nVel = texture(u_velTex, neighborUV).xyz;
+                vec2 relVel = nVel.xy - vel.xy;
+                force += relVel * u_viscosity * term;
+                
+                if (r < h * 0.3) {
+                     float repulsion = (h*0.3 - r) * 3000.0; // Strong core repulsion
+                     force += dir * repulsion;
+                }
+            }
+        }
+    }
+    
+    // Force Cap
+    float fMag = length(force);
+    if (fMag > 800.0) force = normalize(force) * 800.0;
+
+    // Gravity - Constant Acceleration Downward
+    force.y -= u_gravity;
+
+    // Mouse Interaction (Impulse)
+    if (u_mouse.z > 0.5 || u_mouse.w > 0.5) {
+        vec2 mDiff = pos.xy - u_mouse.xy;
+        float mDistSq = dot(mDiff, mDiff);
+        float mRadius = u_radius * 3.5; 
+        
+        if (mDistSq < mRadius * mRadius) {
+            float dist = sqrt(mDistSq);
+            vec2 mDir = mDiff / dist;
+            
+            float strength = 0.0;
+            if (u_mouse.z > 0.5) strength = 800.0;  // Stronger Repel
+            if (u_mouse.w > 0.5) strength = -800.0; 
+            
+            force += mDir * strength * (1.0 - dist/mRadius);
+        }
+    }
+    
+    // Thermal Noise (Micro-jitter to break crystals)
+    vec2 noise = vec2(rand(uv + pos.xy) - 0.5, rand(uv - pos.xy) - 0.5);
+    force += noise * 5.0;
+
+    // --- NEW PHYSICS INTEGRATION ---
+    
+    // 1. Air Resistance (Drag)
+    // Opposes velocity squared. This limits max speed naturally without killing acceleration.
+    force -= vel.xy * length(vel.xy) * 0.8; 
+
+    // 2. Apply Forces
+    vel.xy += force * u_dt;
+    
+    // 3. Minimal mechanical friction (just to prevent infinite oscillation)
+    // Changed from 0.96 to 0.998. This lets particles KEEP their momentum!
+    vel.xy *= 0.998; 
+    
+    // Boundaries (Bouncy)
+    float b = 0.01;
+    float bounce = 0.5;
+    if (pos.y < b) { vel.y = abs(vel.y) * bounce; }
+    if (pos.x < b) { vel.x = abs(vel.x) * bounce; }
+    if (pos.x > 1.77) { vel.x = -abs(vel.x) * bounce; }
+    
+    // Hard Speed Limit (Safety)
+    float speed = length(vel.xy);
+    if (speed > 8.0) vel.xy = (vel.xy / speed) * 8.0;
+
+    outVelocity = vec4(vel, 1.0);
+}
+</script>
+
+<!-- 4. Position Update -->
+<script type="x-shader/x-fragment" id="frag-position">
+#version 300 es
+precision highp float;
+
+uniform sampler2D u_posTex;
+uniform sampler2D u_velTex;
+uniform float u_dt;
+uniform float u_count;
+uniform vec2 u_aspect;
+
+out vec4 outPos;
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / u_count;
+    vec3 pos = texture(u_posTex, uv).xyz;
+    vec3 vel = texture(u_velTex, uv).xyz;
+
+    pos += vel * u_dt;
+
+    if (pos.y < 0.0) pos.y = 0.0;
+    if (pos.y > 1.0) pos.y = 1.0;
+    if (pos.x < 0.0) pos.x = 0.0;
+    if (pos.x > u_aspect.x) pos.x = u_aspect.x;
+
+    outPos = vec4(pos, 1.0);
+}
+</script>
+
+<!-- 5. Particle Render Vertex -->
+<script type="x-shader/x-vertex" id="vert-render">
+#version 300 es
+in vec2 a_uv; 
+uniform sampler2D u_posTex;
+uniform sampler2D u_velTex;
+uniform sampler2D u_densityTex;
+uniform vec2 u_aspect;
+uniform float u_pointSize;
+
+out vec3 v_vel;
+out float v_density;
+
+void main() {
+    vec4 pos = texture(u_posTex, a_uv);
+    vec4 vel = texture(u_velTex, a_uv);
+    
+    v_vel = vel.xyz;
+    v_density = texture(u_densityTex, a_uv).x;
+
+    float x = (pos.x / u_aspect.x) * 2.0 - 1.0;
+    float y = pos.y * 2.0 - 1.0;
+
+    gl_Position = vec4(x, y, 0.0, 1.0);
+    gl_PointSize = u_pointSize; 
+}
+</script>
+
+<!-- 6. Particle Render Fragment -->
+<script type="x-shader/x-fragment" id="frag-render">
+#version 300 es
+precision mediump float;
+in vec3 v_vel;
+in float v_density;
+uniform int u_colorMode;
+out vec4 outColor;
+void main() {
+    vec2 coord = gl_PointCoord - vec2(0.5);
+    if (length(coord) > 0.5) discard;
+    
+    vec3 color;
+    if (u_colorMode == 0) {
+        float speed = length(v_vel);
+        color = mix(vec3(0.1, 0.4, 0.9), vec3(1.0, 0.8, 0.4), clamp(speed * 0.4, 0.0, 1.0));
+    } else {
+        float d = v_density * 0.0001; 
+        color = mix(vec3(0.0, 0.3, 0.8), vec3(0.4, 1.0, 0.9), clamp(d, 0.0, 1.0));
+    }
+    outColor = vec4(color, 1.0);
+}
+</script>
+
+<!-- 7. Trail/Fade -->
+<script type="x-shader/x-fragment" id="frag-fade">
+#version 300 es
+precision mediump float;
+uniform sampler2D u_tex;
+uniform float u_decay;
+out vec4 outColor;
+void main() {
+    vec4 c = texture(u_tex, gl_FragCoord.xy / vec2(textureSize(u_tex, 0)));
+    outColor = vec4(c.rgb * u_decay, c.a); 
+}
+</script>
+
+<!-- 8. Composite -->
+<script type="x-shader/x-fragment" id="frag-composite">
+#version 300 es
+precision mediump float;
+uniform sampler2D u_trailTex;
+out vec4 outColor;
+void main() {
+    vec2 uv = gl_FragCoord.xy / vec2(textureSize(u_trailTex, 0));
+    vec4 c = texture(u_trailTex, uv);
+    outColor = vec4(c.rgb, 1.0);
+}
+</script>
+
+<script>
+const canvas = document.getElementById('glCanvas');
+const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+
+if (!gl) alert("WebGL 2 is required.");
+if (!gl.getExtension("EXT_color_buffer_float")) alert("Floating point textures required.");
+
+const CONFIG = {
+    texSize: 64, 
+    count: 4096,
+    gravity: 80,
+    viscosity: 0.02,
+    pressureM: 1.0,
+    radius: 0.04,
+    trailDecay: 0.94,
+    colorMode: 0,
+    pointSize: 8.0
+};
+
+let width, height, aspectX;
+const mouse = { x: 0, y: 0, left: 0, right: 0 };
+
+function createProgram(gl, vsId, fsId) {
+    const vsSrc = document.getElementById(vsId).textContent.trim();
+    const fsSrc = document.getElementById(fsId).textContent.trim();
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, vsSrc);
+    gl.compileShader(vs);
+    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) console.error("VS Error:", gl.getShaderInfoLog(vs));
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, fsSrc);
+    gl.compileShader(fs);
+    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error("FS Error:", gl.getShaderInfoLog(fs));
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    return prog;
+}
+
+function createDoubleFBO(size) {
+    let bufs = [];
+    for (let i = 0; i < 2; i++) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, size, size, 0, gl.RGBA, gl.FLOAT, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        bufs.push({ tex, fbo });
+    }
+    return { read: bufs[0], write: bufs[1], swap: function() { let temp = this.read; this.read = this.write; this.write = temp; }};
+}
+
+function createSingleFBO(w, h) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return { tex, fbo };
+}
+
+let progDensity, progVel, progPos, progRender, progFade, progComposite;
+let bufPos, bufVel, bufDensity, bufTrails;
+let quadVao, particlesVao;
+
+function initGL() {
+    resize();
+    progDensity = createProgram(gl, 'vert-quad', 'frag-density');
+    progVel = createProgram(gl, 'vert-quad', 'frag-velocity');
+    progPos = createProgram(gl, 'vert-quad', 'frag-position');
+    progRender = createProgram(gl, 'vert-render', 'frag-render');
+    progFade = createProgram(gl, 'vert-quad', 'frag-fade');
+    progComposite = createProgram(gl, 'vert-quad', 'frag-composite');
+
+    const quadVerts = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+    const qBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, qBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+    quadVao = gl.createVertexArray();
+    gl.bindVertexArray(quadVao);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    initParticles(CONFIG.texSize);
+    resizeTrails();
+}
+
+function initParticles(size) {
+    CONFIG.texSize = size;
+    CONFIG.count = size * size;
+    document.getElementById('val-count').innerText = CONFIG.count;
+
+    bufPos = createDoubleFBO(size);
+    bufVel = createDoubleFBO(size);
+    const denTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, denTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, size, size, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    const denFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, denFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, denTex, 0);
+    bufDensity = { tex: denTex, fbo: denFbo };
+
+    const posData = new Float32Array(size * size * 4);
+    const velData = new Float32Array(size * size * 4);
+
+    const cols = size;
+    const spacing = 0.01;
+    const startX = (aspectX - (cols * spacing)) / 2;
+    const startY = 0.5;
+
+    for (let i = 0; i < CONFIG.count; i++) {
+        const x = i % cols;
+        const y = Math.floor(i / cols);
+        
+        let floatJitter = (Math.random() - 0.5) * 0.005;
+        
+        posData[i*4 + 0] = startX + x * spacing + floatJitter;
+        posData[i*4 + 1] = startY + y * spacing + floatJitter;
+        posData[i*4 + 2] = 0;
+        posData[i*4 + 3] = 1;
+
+        velData[i*4 + 0] = (Math.random() - 0.5) * 0.1;
+        velData[i*4 + 1] = (Math.random() - 0.5) * 0.1;
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, bufPos.read.tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, size, size, gl.RGBA, gl.FLOAT, posData);
+    gl.bindTexture(gl.TEXTURE_2D, bufVel.read.tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, size, size, gl.RGBA, gl.FLOAT, velData);
+
+    const uvs = new Float32Array(CONFIG.count * 2);
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            const i = y * size + x;
+            uvs[i*2 + 0] = (x + 0.5) / size;
+            uvs[i*2 + 1] = (y + 0.5) / size;
+        }
+    }
+    const uvBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+
+    particlesVao = gl.createVertexArray();
+    gl.bindVertexArray(particlesVao);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+}
+
+function resizeTrails() {
+    const t1 = createSingleFBO(width, height);
+    const t2 = createSingleFBO(width, height);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t1.fbo);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t2.fbo);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    bufTrails = { read: t1, write: t2, swap: function() { let temp = this.read; this.read = this.write; this.write = temp; }};
+}
+
+function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+    aspectX = width / height;
+    gl.viewport(0, 0, width, height);
+    if (bufTrails) resizeTrails();
+}
+
+window.addEventListener('resize', resize);
+window.addEventListener('mousemove', e => {
+    mouse.x = (e.clientX / width) * aspectX;
+    mouse.y = 1.0 - (e.clientY / height);
+});
+window.addEventListener('mousedown', e => {
+    if (e.button === 0) mouse.left = 1;
+    if (e.button === 2) mouse.right = 1;
+});
+window.addEventListener('mouseup', () => { mouse.left = 0; mouse.right = 0; });
+window.addEventListener('contextmenu', e => e.preventDefault());
+
+let lastTime = 0;
+let frames = 0;
+
+function step(time) {
+    if (time - lastTime >= 1000) {
+        document.getElementById('fps').innerText = frames;
+        frames = 0; lastTime = time;
+    }
+    frames++;
+
+    gl.disable(gl.BLEND); 
+    
+    for (let i = 0; i < 8; i++) {
+        gl.useProgram(progDensity);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bufDensity.fbo);
+        gl.viewport(0, 0, CONFIG.texSize, CONFIG.texSize);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufPos.read.tex);
+        gl.uniform1i(gl.getUniformLocation(progDensity, 'u_posTex'), 0);
+        gl.uniform1f(gl.getUniformLocation(progDensity, 'u_radius'), CONFIG.radius);
+        gl.uniform1f(gl.getUniformLocation(progDensity, 'u_count'), CONFIG.texSize);
+        gl.bindVertexArray(quadVao);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        gl.useProgram(progVel);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bufVel.write.fbo);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufPos.read.tex);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bufVel.read.tex);
+        gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, bufDensity.tex);
+        gl.uniform1i(gl.getUniformLocation(progVel, 'u_posTex'), 0);
+        gl.uniform1i(gl.getUniformLocation(progVel, 'u_velTex'), 1);
+        gl.uniform1i(gl.getUniformLocation(progVel, 'u_densityTex'), 2);
+        gl.uniform1f(gl.getUniformLocation(progVel, 'u_count'), CONFIG.texSize);
+        gl.uniform1f(gl.getUniformLocation(progVel, 'u_radius'), CONFIG.radius);
+        gl.uniform1f(gl.getUniformLocation(progVel, 'u_dt'), 0.002);
+        gl.uniform1f(gl.getUniformLocation(progVel, 'u_gravity'), CONFIG.gravity * 0.1);
+        gl.uniform1f(gl.getUniformLocation(progVel, 'u_viscosity'), CONFIG.viscosity);
+        gl.uniform1f(gl.getUniformLocation(progVel, 'u_pressureM'), CONFIG.pressureM);
+        gl.uniform4f(gl.getUniformLocation(progVel, 'u_mouse'), mouse.x, mouse.y, mouse.left, mouse.right);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        bufVel.swap();
+
+        gl.useProgram(progPos);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bufPos.write.fbo);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufPos.read.tex);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bufVel.read.tex);
+        gl.uniform1i(gl.getUniformLocation(progPos, 'u_posTex'), 0);
+        gl.uniform1i(gl.getUniformLocation(progPos, 'u_velTex'), 1);
+        gl.uniform1f(gl.getUniformLocation(progPos, 'u_dt'), 0.002);
+        gl.uniform1f(gl.getUniformLocation(progPos, 'u_count'), CONFIG.texSize);
+        gl.uniform2f(gl.getUniformLocation(progPos, 'u_aspect'), aspectX, 1.0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        bufPos.swap();
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, bufTrails.write.fbo);
+    gl.viewport(0, 0, width, height);
+    gl.useProgram(progFade);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufTrails.read.tex);
+    gl.uniform1i(gl.getUniformLocation(progFade, 'u_tex'), 0);
+    gl.uniform1f(gl.getUniformLocation(progFade, 'u_decay'), CONFIG.trailDecay);
+    gl.bindVertexArray(quadVao);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    
+    gl.useProgram(progRender);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufPos.read.tex);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bufVel.read.tex);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, bufDensity.tex);
+    gl.uniform1i(gl.getUniformLocation(progRender, 'u_posTex'), 0);
+    gl.uniform1i(gl.getUniformLocation(progRender, 'u_velTex'), 1);
+    gl.uniform1i(gl.getUniformLocation(progRender, 'u_densityTex'), 2);
+    gl.uniform2f(gl.getUniformLocation(progRender, 'u_aspect'), aspectX, 1.0);
+    gl.uniform1f(gl.getUniformLocation(progRender, 'u_pointSize'), CONFIG.pointSize);
+    gl.uniform1i(gl.getUniformLocation(progRender, 'u_colorMode'), CONFIG.colorMode);
+    
+    gl.bindVertexArray(particlesVao);
+    gl.drawArrays(gl.POINTS, 0, CONFIG.count);
+    
+    bufTrails.swap();
+
+    gl.disable(gl.BLEND);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(progComposite);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, bufTrails.read.tex);
+    gl.uniform1i(gl.getUniformLocation(progComposite, 'u_trailTex'), 0);
+    gl.bindVertexArray(quadVao);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    requestAnimationFrame(step);
+}
+
+document.getElementById('texSize').addEventListener('input', e => initParticles(parseInt(e.target.value)));
+document.getElementById('reset-btn').addEventListener('click', () => initParticles(CONFIG.texSize));
+
+const bindInput = (id, key, parse) => {
+    document.getElementById(id).addEventListener('input', e => {
+        const val = parse(e.target.value);
+        CONFIG[key] = val;
+        document.getElementById('val-' + id).innerText = val;
+    });
+};
+
+// Linked Radius logic (Fixed Overlap)
+document.getElementById('radius').addEventListener('input', e => {
+    const r = parseFloat(e.target.value);
+    CONFIG.radius = r;
+    CONFIG.pointSize = r * 210.0; 
+    document.getElementById('val-radius').innerText = r;
+});
+
+document.getElementById('colorMode').addEventListener('input', e => {
+    const val = parseInt(e.target.value);
+    CONFIG.colorMode = val;
+    document.getElementById('val-color').innerText = val === 0 ? 'Velocity' : 'Density';
+});
+
+bindInput('gravity', 'gravity', parseFloat);
+bindInput('visc', 'viscosity', parseFloat);
+bindInput('pressure', 'pressureM', parseFloat);
+bindInput('trail', 'trailDecay', parseFloat);
+
+initGL();
+requestAnimationFrame(step);
+
+</script>
+</body>
+</html>
